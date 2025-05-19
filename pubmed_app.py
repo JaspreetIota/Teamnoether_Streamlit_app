@@ -3,6 +3,7 @@ from Bio import Entrez
 import pandas as pd
 import re
 from time import sleep
+from io import BytesIO  # Added for Excel download
 
 # ---------- CONFIG ----------
 Entrez.email = "your_email@example.com"
@@ -103,6 +104,19 @@ if start_button:
     if data:
         df = pd.DataFrame(data)
         st.dataframe(df)
-        st.download_button("📁 Download Excel", df.to_excel(index=False), file_name="pubmed_results.xlsx")
+
+        # ✅ Fix: Create Excel file in memory
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name="Results")
+        output.seek(0)
+
+        # ✅ Working download button
+        st.download_button(
+            label="📁 Download Excel",
+            data=output,
+            file_name="pubmed_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.error("No valid results found.")
