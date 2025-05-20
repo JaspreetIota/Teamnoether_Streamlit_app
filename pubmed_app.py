@@ -28,7 +28,7 @@ def format_mla(authors, title, journal, volume, issue, year, pages, doi):
     return f"{author_str}. \"{title}.\" *{journal}*, vol. {volume}, no. {issue}, {year}, pp. {pages}. doi:{doi}"
 
 # ---------- STREAMLIT UI ----------
-st.title("🔬 IOTA's PubMed Article Extractor")
+st.title("🔬 IOTAs PubMed Article Extractor")
 search_term = st.text_input("Enter your PubMed search term", '(Human Biology) AND ("united states"[Affiliation] OR USA[Affiliation]) AND (2022[Date - Publication])')
 max_results = st.number_input("Max Results", min_value=10, max_value=10000, value=100)
 start_button = st.button("Fetch Articles")
