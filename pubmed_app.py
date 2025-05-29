@@ -51,7 +51,7 @@ selected_countries = st.multiselect(
         "USA", "United States", "United Kingdom", "Germany", "India", "Canada", "Australia", 
         "France", "China", "Japan", "Brazil", "Italy", "Spain", "Netherlands", "Switzerland"
     ],
-    default=["USA"]
+    default=["USA", "United States"]
 )
 
 max_results = st.number_input("Max Results", min_value=10, max_value=10000, value=100)
