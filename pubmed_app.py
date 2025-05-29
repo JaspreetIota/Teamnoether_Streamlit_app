@@ -3,14 +3,28 @@ from Bio import Entrez
 import pandas as pd
 import re
 from time import sleep
-from io import BytesIO  # Added for Excel download
+from io import BytesIO
+import logging
 
 # ---------- CONFIG ----------
-Entrez.email = "your_email@example.com"
+Entrez.email = "your_email@example.com"  # Replace with your email
+logging.basicConfig(level=logging.INFO)
+
+# ---------- CONSTANTS ----------
+PERSONAL_EMAIL_DOMAINS = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com']
+BATCH_SIZE = 100
+
+# ---------- FUNCTIONS ----------
+
+def extract_email(text):
+    match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text)
+    return match.group(0).rstrip('.') if match else ""
 
 def extract_university_name(affiliation_text):
-    keywords = ['University', ' Institute', 'School', 'College', 'Hospital',
-                'Laboratory', 'Lab', 'Centre', 'Center', 'Health', 'Academy']
+    keywords = [
+        'University', 'Institute', 'School', 'College', 'Hospital',
+        'Laboratory', 'Lab', 'Centre', 'Center', 'Health', 'Academy'
+    ]
     cleaned_aff = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "", affiliation_text)
     parts = [p.strip() for p in re.split(r'[;,]', cleaned_aff) if p.strip()]
     for part in reversed(parts):
@@ -19,35 +33,53 @@ def extract_university_name(affiliation_text):
                 return part
     return ""
 
-def extract_email(text):
-    match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text)
-    return match.group(0).rstrip('.') if match else ""
-
 def format_mla(authors, title, journal, volume, issue, year, pages, doi):
     author_str = ", ".join(authors)
     return f"{author_str}. \"{title}.\" *{journal}*, vol. {volume}, no. {issue}, {year}, pp. {pages}. doi:{doi}"
 
 # ---------- STREAMLIT UI ----------
 st.title("🔬 IOTA's PubMed Article Extractor")
-search_term = st.text_input("Enter your PubMed search term", '(Human Biology) AND ("united states"[Affiliation] OR USA[Affiliation]) AND (2022[Date - Publication])')
+
+search_term = st.text_input(
+    "Enter your PubMed search term",
+    '(Human Biology) AND (2022[Date - Publication])'
+)
+
+selected_countries = st.multiselect(
+    "🌍 Select Countries (match in affiliation text)",
+    options=[
+        "USA", "United States", "United Kingdom", "Germany", "India", "Canada", "Australia", 
+        "France", "China", "Japan", "Brazil", "Italy", "Spain", "Netherlands", "Switzerland"
+    ],
+    default=["USA"]
+)
+
 max_results = st.number_input("Max Results", min_value=10, max_value=10000, value=100)
 start_button = st.button("Fetch Articles")
 
-if start_button:
-    st.info("Searching PubMed...")
+if not selected_countries:
+    st.warning("⚠️ Please select at least one country to proceed.")
+
+if start_button and selected_countries:
+    st.info("🔎 Searching PubMed...")
     search_handle = Entrez.esearch(db="pubmed", term=search_term, retmax=max_results)
     search_results = Entrez.read(search_handle)
     pmids = search_results["IdList"]
 
-    BATCH_SIZE = 100
     data = []
+    progress = st.progress(0)
 
-    for start in range(0, len(pmids), BATCH_SIZE):
+    for i, start in enumerate(range(0, len(pmids), BATCH_SIZE)):
         end = min(start + BATCH_SIZE, len(pmids))
         batch_pmids = pmids[start:end]
 
-        fetch_handle = Entrez.efetch(db="pubmed", id=batch_pmids, rettype="xml")
-        articles = Entrez.read(fetch_handle)
+        try:
+            fetch_handle = Entrez.efetch(db="pubmed", id=batch_pmids, rettype="xml")
+            articles = Entrez.read(fetch_handle)
+        except Exception as e:
+            st.error(f"❌ Failed to fetch batch {start}-{end}: {e}")
+            logging.exception("Fetch error")
+            continue
 
         for article in articles['PubmedArticle']:
             try:
@@ -68,14 +100,19 @@ if start_button:
                 for author in article_data.get("AuthorList", []):
                     if "ForeName" in author and "LastName" in author:
                         full_name = f"{author['LastName']}, {author['ForeName']}"
+
                         for aff in author.get("AffiliationInfo", []):
                             aff_text = aff.get("Affiliation", "")
                             email = extract_email(aff_text)
-                            if not email or "gmail.com" in email:
+                            if not email or any(domain in email for domain in PERSONAL_EMAIL_DOMAINS):
                                 continue
 
-                            country_match = re.search(r'\b(USA|United States)\b', aff_text, re.IGNORECASE)
-                            if not country_match:
+                            matched_country = next(
+                                (country for country in selected_countries
+                                 if re.search(rf'\b{re.escape(country)}\b', aff_text, re.IGNORECASE)),
+                                None
+                            )
+                            if not matched_country:
                                 continue
 
                             university = extract_university_name(aff_text)
@@ -88,30 +125,30 @@ if start_button:
                                 "PMID": pmid,
                                 "Author": full_name,
                                 "Email": email,
-                                "Country": country_match.group(0),
+                                "Country": matched_country,
                                 "University": university,
                                 "Affiliation": aff_text,
                                 "MLA Citation": mla
                             })
                             break
             except Exception as e:
-                st.warning(f"Error: {e}")
+                logging.exception("Article processing error")
+                st.warning(f"⚠️ Skipped an article due to error: {e}")
                 continue
 
-        sleep(0.5)
-        st.success(f"✅ Processed {end}/{len(pmids)} articles...")
+        sleep(0.5)  # Respect NCBI's API rate limit
+        progress.progress((i + 1) / ((len(pmids) - 1) // BATCH_SIZE + 1))
 
     if data:
         df = pd.DataFrame(data)
+        st.success(f"✅ Completed! {len(data)} valid entries extracted.")
         st.dataframe(df)
 
-        # ✅ Fix: Create Excel file in memory
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name="Results")
         output.seek(0)
 
-        # ✅ Working download button
         st.download_button(
             label="📁 Download Excel",
             data=output,
@@ -119,4 +156,4 @@ if start_button:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.error("No valid results found.")
+        st.error("❌ No valid data extracted. Try refining your search.")
