@@ -42,7 +42,7 @@ st.title("🔬 IOTA's PubMed Article Extractor")
 
 search_term = st.text_input(
     "Enter your PubMed search term",
-    '(Human Biology) AND (2022[Date - Publication])'
+    '(Human Biology) AND ("united states"[Affiliation] OR USA[Affiliation]) AND (2022[Date - Publication])'
 )
 
 selected_countries = st.multiselect(
@@ -54,17 +54,41 @@ selected_countries = st.multiselect(
     default=["USA", "United States"]
 )
 
-max_results = st.number_input("Max Results", min_value=10, max_value=10000, value=100)
+retstart = st.number_input(
+    "Start from record number (0 = first)",
+    min_value=0, value=0, step=100,
+    help="Choose the zero-based starting index for fetching articles (for pagination)."
+)
+
+retmax = st.number_input(
+    "How many records to fetch",
+    min_value=10, max_value=10000, value=100, step=10,
+    help="Number of articles to fetch in this batch."
+)
+
 start_button = st.button("Fetch Articles")
 
 if not selected_countries:
     st.warning("⚠️ Please select at least one country to proceed.")
 
 if start_button and selected_countries:
-    st.info("🔎 Searching PubMed...")
-    search_handle = Entrez.esearch(db="pubmed", term=search_term, retmax=max_results)
-    search_results = Entrez.read(search_handle)
-    pmids = search_results["IdList"]
+    st.info(f"🔎 Searching PubMed (records {retstart} to {retstart + retmax - 1})...")
+    try:
+        search_handle = Entrez.esearch(
+            db="pubmed",
+            term=search_term,
+            retstart=retstart,
+            retmax=retmax
+        )
+        search_results = Entrez.read(search_handle)
+    except Exception as e:
+        st.error(f"❌ Failed to search PubMed: {e}")
+        st.stop()
+
+    pmids = search_results.get("IdList", [])
+    if not pmids:
+        st.error("No articles found for the given query and range.")
+        st.stop()
 
     data = []
     progress = st.progress(0)
