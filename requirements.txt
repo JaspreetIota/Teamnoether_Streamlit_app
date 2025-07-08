@@ -132,3 +132,5 @@ wheel==0.45.1
 wsproto==1.2.0
 XlsxWriter==3.2.0
 feedparser==6.0.10
+cffi==1.16.0
+pyzmq==25.1.2
