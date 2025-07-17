@@ -39,6 +39,19 @@ def format_mla(authors, title, journal, volume, issue, year, pages, doi):
     author_str = ", ".join(authors)
     return f"{author_str}. \"{title}.\" *{journal}*, vol. {volume}, no. {issue}, {year}, pp. {pages}. doi:{doi}"
 
+def extract_doi(elocations):
+    if isinstance(elocations, dict):
+        elocations = [elocations]
+    elif not isinstance(elocations, list):
+        elocations = [elocations]
+    for eloc in elocations:
+        try:
+            if hasattr(eloc, 'attributes') and eloc.attributes.get("EIdType") == "doi":
+                return str(eloc)
+        except Exception:
+            continue
+    return "N/A"
+
 def get_google_news(query, max_articles=5):
     encoded_query = urllib.parse.quote(query)
     url = f'https://news.google.com/rss/search?q={encoded_query}'
@@ -58,7 +71,6 @@ def get_google_news(query, max_articles=5):
 
 # ---------- STREAMLIT UI ----------
 st.set_page_config(page_title="IOTA Tools", layout="wide")
-
 menu = st.sidebar.selectbox("🔍 Select Tool", ["PubMed Article Extractor", "Google News Search"])
 
 # ==========================
@@ -141,14 +153,7 @@ if menu == "PubMed Article Extractor":
                     year = article_data["Journal"]["JournalIssue"]["PubDate"].get("Year", "N/A")
                     pages = article_data.get("Pagination", {}).get("MedlinePgn", "N/A")
 
-                    elocations = article_data.get("ELocationID", [])
-                    if isinstance(elocations, dict):
-                        elocations = [elocations]
-                    doi = "N/A"
-                    for eloc in elocations:
-                        if eloc.attributes.get("EIdType") == "doi":
-                            doi = eloc.get("_", "N/A")
-                            break
+                    doi = extract_doi(article_data.get("ELocationID", []))
 
                     for author in article_data.get("AuthorList", []):
                         if "ForeName" in author and "LastName" in author:
