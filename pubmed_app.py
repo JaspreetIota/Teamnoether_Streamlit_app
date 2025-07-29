@@ -69,8 +69,10 @@ menu = st.sidebar.selectbox("🔍 Select Tool", [
     "PubMed Article Extractor",
     "Google News Search",
     "Excel Splitter",
-    "Yahoo Finance Company Lookup"
+    "Yahoo Finance Company Lookup",
+    "Excel Merger-Flatten Viewer"  # New Feature
 ])
+
 
 # ==========================
 # 🚀 PubMed Article Extractor
@@ -348,4 +350,54 @@ elif menu == "Yahoo Finance Company Lookup":
                     st.markdown(f"- **{key}:** {value}")
             else:
                 st.warning("No detailed data available for this symbol.")
+# ===============================
+# 🧾 Excel Merger-Flatten Viewer
+# ===============================
+elif menu == "Excel Merger-Flatten Viewer":
+    st.title("🧾 Flatten Excel with Merged Cells")
+
+    uploaded_file = st.file_uploader("Upload an Excel file with merged cells", type=["xlsx"])
+
+    if uploaded_file:
+        from openpyxl import load_workbook
+
+        with st.spinner("Processing..."):
+            wb = load_workbook(uploaded_file)
+            ws = wb.active
+
+            # Step 1: Read values into 2D list
+            data = [[cell.value for cell in row] for row in ws.iter_rows()]
+
+            # Step 2: Fill in merged cell ranges
+            for merged_range in ws.merged_cells.ranges:
+                min_row, min_col, max_row, max_col = (
+                    merged_range.min_row,
+                    merged_range.min_col,
+                    merged_range.max_row,
+                    merged_range.max_col
+                )
+                top_left_value = ws.cell(row=min_row, column=min_col).value
+
+                for row in range(min_row - 1, max_row):
+                    for col in range(min_col - 1, max_col):
+                        if row != min_row - 1 or col != min_col - 1:
+                            data[row][col] = top_left_value
+
+            # Step 3: Convert to DataFrame and display
+            df = pd.DataFrame(data)
+            st.success("✅ File processed. Here's a preview:")
+            st.dataframe(df)
+
+            # Step 4: Download cleaned Excel
+            output_buffer = BytesIO()
+            df.to_excel(output_buffer, index=False, header=False)
+            output_buffer.seek(0)
+
+            st.download_button(
+                label="📥 Download Flattened Excel",
+                data=output_buffer,
+                file_name="flattened_output.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
 
