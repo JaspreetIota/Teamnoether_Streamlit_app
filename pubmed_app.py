@@ -7,6 +7,7 @@ from io import BytesIO
 import logging
 import feedparser
 import urllib.parse
+from zipfile import ZipFile
 
 # ---------- CONFIG ----------
 Entrez.email = "your_email@example.com"  # Replace with your actual email
@@ -17,23 +18,15 @@ PERSONAL_EMAIL_DOMAINS = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com'
 BATCH_SIZE = 100
 
 # ---------- FUNCTIONS ----------
-
 def extract_email(text):
     match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text)
     return match.group(0).rstrip('.') if match else ""
 
 def extract_university_name(affiliation_text):
-    keywords = [
-        'University', 'Institute', 'School', 'College', 'Hospital',
-        'Laboratory', 'Lab', 'Centre', 'Center', 'Health', 'Academy'
-    ]
-    cleaned_aff = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "", affiliation_text)
-    parts = [p.strip() for p in re.split(r'[;,]', cleaned_aff) if p.strip()]
-    for part in reversed(parts):
-        if any(k.lower() in part.lower() for k in keywords):
-            if not re.search(r'\d', part) and '@' not in part and len(part.split()) > 1:
-                return part
-    return ""
+    keywords = ['university', 'institute', 'college', 'school', 'center', 'centre', 'hospital']
+    parts = [p.strip() for p in re.split(r'[;,]', affiliation_text.lower()) if p.strip()]
+    matches = [p.title() for p in parts if any(k in p for k in keywords)]
+    return matches[-1] if matches else ""
 
 def format_mla(authors, title, journal, volume, issue, year, pages, doi):
     author_str = ", ".join(authors)
@@ -71,7 +64,12 @@ def get_google_news(query, max_articles=5):
 
 # ---------- STREAMLIT UI ----------
 st.set_page_config(page_title="IOTA Tools", layout="wide")
-menu = st.sidebar.selectbox("🔍 Select Tool", ["PubMed Article Extractor", "Google News Search"])
+
+menu = st.sidebar.selectbox("🔍 Select Tool", [
+    "PubMed Article Extractor",
+    "Google News Search",
+    "Excel Splitter"
+])
 
 # ==========================
 # 🚀 PubMed Article Extractor
@@ -93,15 +91,8 @@ if menu == "PubMed Article Extractor":
         default=["USA", "United States"]
     )
 
-    retstart = st.number_input(
-        "Start from record number (0 = first)",
-        min_value=0, value=0, step=100
-    )
-
-    retmax = st.number_input(
-        "How many records to fetch",
-        min_value=10, max_value=10000, value=100, step=10
-    )
+    retstart = st.number_input("Start from record number", min_value=0, value=0, step=100)
+    retmax = st.number_input("How many records to fetch", min_value=10, max_value=10000, value=100, step=10)
 
     start_button = st.button("Fetch Articles")
 
@@ -236,3 +227,47 @@ elif menu == "Google News Search":
                 st.markdown(f"*Published:* {article['published']}\n")
         else:
             st.warning("⚠️ No news articles found or feed could not be loaded.")
+
+# =====================
+# 📂 Excel Splitter
+# =====================
+elif menu == "Excel Splitter":
+    st.title("📂 Excel Splitter - Split Large Excel File into Smaller Files")
+
+    uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx"])
+
+    entries_per_file = st.number_input(
+        "Number of entries per file",
+        min_value=100, max_value=10000, value=1500, step=100
+    )
+
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file)
+        total_rows = len(df)
+        st.info(f"✅ Uploaded file has **{total_rows}** rows.")
+
+        if st.button("🔨 Split Excel File"):
+            with st.spinner("Splitting file..."):
+                zip_buffer = BytesIO()
+                with ZipFile(zip_buffer, "w") as zip_file:
+                    num_files = (len(df) // entries_per_file) + (1 if len(df) % entries_per_file != 0 else 0)
+
+                    for i in range(num_files):
+                        start_row = i * entries_per_file
+                        end_row = (i + 1) * entries_per_file
+                        df_subset = df[start_row:end_row]
+
+                        file_buffer = BytesIO()
+                        df_subset.to_excel(file_buffer, index=False)
+                        file_buffer.seek(0)
+
+                        zip_file.writestr(f'split_part_{i + 1}.xlsx', file_buffer.read())
+
+                zip_buffer.seek(0)
+
+                st.download_button(
+                    label="📦 Download ZIP of Split Files",
+                    data=zip_buffer,
+                    file_name="split_excel_files.zip",
+                    mime="application/zip"
+                )
