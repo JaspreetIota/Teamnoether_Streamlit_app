@@ -78,7 +78,7 @@ menu = st.sidebar.selectbox("🔍 Select Tool", [
 # 🚀 PubMed Article Extractor
 # ==========================
 if menu == "PubMed Article Extractor":
-    st.title("🔬 IOTA's PubMed Article Extractor")
+    st.title("🔬 Auto Author/Article Extractor")
 
     search_term = st.text_input(
         "Enter your PubMed search term",
