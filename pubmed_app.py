@@ -68,7 +68,8 @@ st.set_page_config(page_title="IOTA Tools", layout="wide")
 menu = st.sidebar.selectbox("🔍 Select Tool", [
     "PubMed Article Extractor",
     "Google News Search",
-    "Excel Splitter"
+    "Excel Splitter",
+    "Yahoo Finance Company Lookup"
 ])
 
 # ==========================
@@ -271,3 +272,80 @@ elif menu == "Excel Splitter":
                     file_name="split_excel_files.zip",
                     mime="application/zip"
                 )
+# ===============================
+# 🔎 Yahoo Finance Company Lookup
+# ===============================
+elif menu == "Yahoo Finance Company Lookup":
+    st.title("🔎 Yahoo Finance Company Lookup")
+
+    try:
+        from yahooquery import search, Ticker
+    except ImportError:
+        st.error("❌ yahooquery is not installed. Please install it using `pip install yahooquery`")
+        st.stop()
+
+    def search_company_yahoo(name, limit=3):
+        try:
+            results = search(name)
+            if not results or "quotes" not in results:
+                return []
+            companies = []
+            for item in results['quotes']:
+                if 'symbol' in item and 'shortname' in item:
+                    companies.append({
+                        "symbol": item['symbol'],
+                        "name": item.get('shortname'),
+                        "exchange": item.get('exchDisp'),
+                        "type": item.get('typeDisp')
+                    })
+                    if len(companies) >= limit:
+                        break
+            return companies
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_company_info(symbol):
+        try:
+            ticker = Ticker(symbol)
+            profile = ticker.asset_profile
+            info = profile.get(symbol, {})
+            return info
+        except Exception as e:
+            return {"error": str(e)}
+
+    st.markdown("Search for a company and fetch detailed metadata from Yahoo Finance.")
+    company_input = st.text_input("Enter Company Name", value="Apple")
+
+    if st.button("Search Company"):
+        if not company_input.strip():
+            st.warning("Please enter a company name.")
+            st.stop()
+
+        with st.spinner("Searching Yahoo Finance..."):
+            matches = search_company_yahoo(company_input)
+
+        if isinstance(matches, dict) and "error" in matches:
+            st.error(f"Error: {matches['error']}")
+        elif not matches:
+            st.warning("No matches found.")
+        else:
+            st.success(f"Found {len(matches)} match(es). Showing top result.")
+
+            top_match = matches[0]
+            st.markdown(f"**Top Match:** `{top_match['name']}`")
+            st.markdown(f"- **Symbol:** {top_match['symbol']}")
+            st.markdown(f"- **Exchange:** {top_match['exchange']}")
+            st.markdown(f"- **Type:** {top_match['type']}")
+
+            with st.spinner("Fetching company details..."):
+                details = get_company_info(top_match['symbol'])
+
+            if isinstance(details, dict) and "error" in details:
+                st.error(f"Error: {details['error']}")
+            elif details:
+                st.subheader("📊 Company Details")
+                for key, value in details.items():
+                    st.markdown(f"- **{key}:** {value}")
+            else:
+                st.warning("No detailed data available for this symbol.")
+
