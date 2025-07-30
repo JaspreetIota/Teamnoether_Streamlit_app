@@ -1,0 +1,8 @@
+[server]
+enableStaticServing = true
+
+[client]
+showSidebarNavigation = false
+
+[menu]
+showGitHubIcon = false
