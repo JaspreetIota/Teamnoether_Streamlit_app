@@ -70,9 +70,9 @@ menu = st.sidebar.selectbox("🔍 Select Tool", [
     "Google News Search",
     "Excel Splitter",
     "Yahoo Finance Company Lookup",
-    "Excel Merger-Flatten Viewer"  # New Feature
+    "Excel Merger-Flatten Viewer",
+    "Fuzzy Name Matcher"  # New Module
 ])
-
 
 # ==========================
 # 🚀 PubMed Article Extractor
@@ -399,5 +399,149 @@ elif menu == "Excel Merger-Flatten Viewer":
                 file_name="flattened_output.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+# ===============================
+# 🔍 Fuzzy Name Matcher
+# ===============================
+elif menu == "Fuzzy Name Matcher":
+    st.title("🔍 Fuzzy Name Matcher")
+    st.markdown("Match standardized names against raw names using fuzzy logic.")
+
+    # === 1. Downloadable Excel Template ===
+    def generate_standard_template():
+        from io import BytesIO
+        df_template = pd.DataFrame({
+            "Raw Data": ["Tesla Motors Inc.", "Massachusetts General Hospital", "Harvard Univ.", "Amazon.com LLC"],
+            "Standardized Names": ["Tesla", "Massachusetts General", "Harvard University", "Amazon"]
+        })
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_template.to_excel(writer, index=False, sheet_name="Template")
+        buffer.seek(0)
+        return buffer
+
+    st.markdown("📄 **Download the standard Excel template** and use it to upload your data.")
+    st.download_button(
+        label="📥 Download Standard Template",
+        data=generate_standard_template(),
+        file_name="fuzzy_match_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # === 2. User Inputs ===
+    uploaded_file = st.file_uploader("📤 Upload Excel File", type=["xlsx"])
+
+    threshold = st.slider("🧪 Match Threshold", min_value=70, max_value=100, value=90, step=1)
+
+    user_keywords = st.text_input("🚫 Enter keywords to ignore (comma-separated)", value="inc, ltd, university, hospital")
+
+    reverse_match = st.checkbox("🔄 Reverse Matching Direction (Raw ⇄ Standardized)", value=False)
+
+    # === 3. Processing ===
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file)
+        df.columns = df.columns.str.strip()
+        st.success(f"✅ Uploaded file with {df.shape[0]} rows and {df.shape[1]} columns.")
+
+        st.dataframe(df.head())
+
+        raw_col = st.selectbox("📌 Select Raw Column", df.columns)
+        standard_col = st.selectbox("🎯 Select Standardized Column", df.columns)
+
+        if st.button("🚀 Run Fuzzy Matching"):
+            with st.spinner("Matching in progress..."):
+
+                from rapidfuzz import fuzz
+                import re
+                from io import BytesIO
+
+                # === 4. Prepare Stopwords ===
+                default_stopwords = {
+                    'inc', 'inc.', 'ltd', 'ltd.', 'co', 'co.', 'corporation', 'corp', 'corp.', 'llc', 'plc', 'limited',
+                    'university', 'college', 'hospital', 'center', 'institute', 'school', 'company', 'system',
+                    'technology', 'medical', 'science', 'sciences', 'people', 'peoples'
+                }
+                user_stopwords = {w.strip().lower() for w in user_keywords.split(",") if w.strip()}
+                STOPWORDS = default_stopwords.union(user_stopwords)
+
+                def clean_name(name):
+                    name = name.lower()
+                    name = re.sub(r'[^\w\s]', '', name)
+                    words = name.split()
+                    return ' '.join([w for w in words if w not in STOPWORDS])
+
+                # === 5. Flip direction if needed ===
+                if reverse_match:
+                    raw_col, standard_col = standard_col, raw_col
+
+                raw_original = df[raw_col].dropna().astype(str).unique().tolist()
+                standard_original = df[standard_col].dropna().astype(str).unique().tolist()
+
+                raw_cleaned = [clean_name(name) for name in raw_original]
+                standard_cleaned = [clean_name(name) for name in standard_original]
+
+                matched_standardized, matched_raw, match_strengths = [], [], []
+                borderline_matches, unmatched_standardized = [], []
+                matched_raw_indices = set()
+
+                for std_orig, std_clean in zip(standard_original, standard_cleaned):
+                    best_score = 0
+                    best_index = None
+
+                    for idx, raw_clean in enumerate(raw_cleaned):
+                        score1 = fuzz.token_sort_ratio(std_clean, raw_clean)
+                        score2 = fuzz.token_set_ratio(std_clean, raw_clean)
+                        avg_score = (score1 + score2) / 2
+
+                        if (score1 >= threshold and score2 >= threshold) or avg_score >= (threshold + 5):
+                            if avg_score > best_score:
+                                best_score = avg_score
+                                best_index = idx
+
+                    if best_index is not None:
+                        raw_orig = raw_original[best_index]
+                        matched_standardized.append(std_orig)
+                        matched_raw.append(raw_orig)
+                        matched_raw_indices.add(best_index)
+
+                        if best_score >= 100:
+                            match_strengths.append("Exact Match")
+                        elif best_score >= threshold:
+                            match_strengths.append(f"{round(best_score, 1)}% Match")
+                        elif best_score >= (threshold - 5):
+                            borderline_matches.append((std_orig, raw_orig, f"{round(best_score, 1)}% Match"))
+                    else:
+                        unmatched_standardized.append(std_orig)
+
+                unmatched_raw = [raw_original[i] for i in range(len(raw_original)) if i not in matched_raw_indices]
+
+                # === 6. Export to Excel ===
+                output_buffer = BytesIO()
+                with pd.ExcelWriter(output_buffer) as writer:
+                    pd.DataFrame({
+                        'Matched Standardized Name': matched_standardized,
+                        'Matched Raw Name': matched_raw,
+                        'Match Strength': match_strengths
+                    }).to_excel(writer, sheet_name='Matches', index=False)
+
+                    pd.DataFrame({'Unmatched Standardized Names': unmatched_standardized}).to_excel(
+                        writer, sheet_name='Unmatched Standardized', index=False
+                    )
+                    pd.DataFrame({'Unmatched Raw Names': unmatched_raw}).to_excel(
+                        writer, sheet_name='Unmatched Raw', index=False
+                    )
+                    if borderline_matches:
+                        pd.DataFrame(borderline_matches, columns=['Standardized Name', 'Potential Raw Match', 'Match Strength']).to_excel(
+                            writer, sheet_name='Borderline Matches', index=False
+                        )
+
+                output_buffer.seek(0)
+                st.success("✅ Matching completed!")
+                st.download_button(
+                    label="📥 Download Results Excel",
+                    data=output_buffer,
+                    file_name="fuzzy_match_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 
