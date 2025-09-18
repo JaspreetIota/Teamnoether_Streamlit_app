@@ -133,3 +133,4 @@ wsproto==1.2.0
 xlsxwriter==3.2.0
 feedparser==6.0.10
 yahooquery
+rapidfuzz==3.6.2
