@@ -71,7 +71,8 @@ menu = st.sidebar.selectbox("🔍 Select Tool", [
     "Excel Splitter",
     "Yahoo Finance Company Lookup",
     "Excel Merger-Flatten Viewer",
-    "Fuzzy Name Matcher"  # New Module
+    "Fuzzy Name Matcher",
+    "Categories Lister"   # ✅ NEW TOOL
 ])
 
 # ==========================
@@ -544,4 +545,67 @@ elif menu == "Fuzzy Name Matcher":
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
+# ===============================
+# 🗂️ Categories Lister
+# ===============================
+elif menu == "Categories Lister":
+    st.title("🗂️ Categories Lister")
+    st.markdown(
+        "Extract **all category values** from an Excel file (including merged cells) "
+        "and export them as a **unique category list**."
+    )
+
+    uploaded_file = st.file_uploader(
+        "📤 Upload Excel File (with merged category columns)",
+        type=["xlsx"]
+    )
+
+    if uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file)
+            st.success(f"✅ File loaded successfully ({df.shape[0]} rows × {df.shape[1]} columns)")
+            st.dataframe(df.head())
+
+            if st.button("🚀 Extract Categories"):
+                with st.spinner("Processing categories..."):
+
+                    # Forward-fill merged cells COLUMN-WISE
+                    df_filled = df.ffill()
+
+                    # Extract all values from all columns
+                    all_categories = (
+                        df_filled.astype(str)
+                                 .values
+                                 .flatten()
+                    )
+
+                    # Clean: remove blanks, nan, duplicates
+                    categories = (
+                        pd.Series(all_categories)
+                          .replace(["nan", "None", ""], pd.NA)
+                          .dropna()
+                          .unique()
+                    )
+
+                    result_df = pd.DataFrame({"Category": categories})
+
+                    st.success(f"✅ Extracted {len(result_df)} unique categories")
+                    st.dataframe(result_df)
+
+                    # Download Excel
+                    output_buffer = BytesIO()
+                    with pd.ExcelWriter(output_buffer, engine="xlsxwriter") as writer:
+                        result_df.to_excel(writer, index=False, sheet_name="Categories")
+
+                    output_buffer.seek(0)
+
+                    st.download_button(
+                        label="📥 Download Categories Excel",
+                        data=output_buffer,
+                        file_name="categories_list.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+        except Exception as e:
+            st.error(f"❌ Failed to process file: {e}")
 
