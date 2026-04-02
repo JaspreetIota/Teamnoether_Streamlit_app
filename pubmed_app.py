@@ -72,9 +72,9 @@ menu = st.sidebar.selectbox("🔍 Select Tool", [
     "Yahoo Finance Company Lookup",
     "Excel Merger-Flatten Viewer",
     "Fuzzy Name Matcher",
-    "Categories Lister"   # ✅ NEW TOOL
+    "Categories Lister",
+    "Patent Scraper"   # ✅ NEW TOOL
 ])
-
 # ==========================
 # 🚀 PubMed Article Extractor
 # ==========================
@@ -609,3 +609,248 @@ elif menu == "Categories Lister":
         except Exception as e:
             st.error(f"❌ Failed to process file: {e}")
 
+# ===============================
+# 📄 Patent Scraper
+# ===============================
+elif menu == "Patent Scraper":
+    st.title("📄 Patent Scraper (Google Patents)")
+
+    import requests
+    from bs4 import BeautifulSoup
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from deep_translator import GoogleTranslator
+    from threading import Lock
+
+    base_url = "https://patents.google.com/patent/{}"
+    MAX_WORKERS = 6
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+
+    translation_cache = {}
+    cache_lock = Lock()
+
+    # --------------------------
+    # Helpers
+    # --------------------------
+    def is_english(text):
+        try:
+            text.encode('ascii')
+            return True
+        except:
+            return False
+
+    def translate_batch(text_list):
+        results = []
+        to_translate = []
+        index_map = {}
+
+        for i, text in enumerate(text_list):
+            text = str(text).strip()
+
+            if not text:
+                results.append("")
+                continue
+
+            with cache_lock:
+                if text in translation_cache:
+                    results.append(translation_cache[text])
+                    continue
+
+            if is_english(text):
+                with cache_lock:
+                    translation_cache[text] = text
+                results.append(text)
+            else:
+                index_map[len(to_translate)] = i
+                to_translate.append(text)
+                results.append(None)
+
+        if to_translate:
+            try:
+                translated = GoogleTranslator(source='auto', target='en').translate_batch(to_translate)
+            except:
+                translated = to_translate
+
+            for idx, t in enumerate(translated):
+                original_index = index_map[idx]
+                original_text = text_list[original_index]
+
+                with cache_lock:
+                    translation_cache[original_text] = t
+
+                results[original_index] = t
+
+        return results
+
+    def extract_pdf_link(soup):
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if href.endswith(".pdf") and "googleapis" in href:
+                return href
+        return ""
+
+    def generate_alternate_doc_numbers(doc):
+        alternatives = []
+
+        if re.match(r"US\d{10,}A\d", doc):
+            alternatives.append(doc[:6] + "0" + doc[6:])
+
+        if doc.startswith("USD") and doc.endswith("S"):
+            alternatives.append(doc + "1")
+            alternatives.append(doc + "2")
+
+        return alternatives
+
+    def fetch_patent(doc):
+        try:
+            r = session.get(base_url.format(doc), timeout=20)
+            if r.status_code == 200 and "Error 404" not in r.text:
+                return r
+        except:
+            pass
+        return None
+
+    def process_patent(doc):
+        inventor = ""
+        assignee = ""
+        status = ""
+        adjusted_expiration = ""
+        availability = "Available"
+        final_doc_used = doc
+
+        response = fetch_patent(doc)
+
+        if not response:
+            for alt in generate_alternate_doc_numbers(doc):
+                response = fetch_patent(alt)
+                if response:
+                    final_doc_used = alt
+                    break
+
+        if not response:
+            return {"document number": doc, "availability": "Not Found"}
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # INVENTOR
+        inventors = []
+        inventor_dt = soup.find("dt", string=re.compile("Inventor", re.I))
+        if inventor_dt:
+            node = inventor_dt.find_next_sibling()
+            while node and node.name == "dd":
+                for a in node.find_all("a"):
+                    if a.text.strip():
+                        inventors.append(a.text.strip())
+                node = node.find_next_sibling()
+
+        inventor = " | ".join(dict.fromkeys(inventors))
+        inventor_translated = " | ".join(dict.fromkeys(translate_batch(inventors)))
+
+        # ASSIGNEE
+        assignees = []
+        assignee_dt = soup.find("dt", string=re.compile("Assignee", re.I))
+        if assignee_dt:
+            node = assignee_dt.find_next_sibling()
+            while node and node.name == "dd":
+                for a in node.find_all("a"):
+                    if a.text.strip():
+                        assignees.append(a.text.strip())
+                node = node.find_next_sibling()
+
+        assignee = " | ".join(dict.fromkeys(assignees))
+        assignee_translated = " | ".join(dict.fromkeys(translate_batch(assignees)))
+
+        # STATUS
+        status_tag = soup.find(string=re.compile("Status", re.I))
+        if status_tag:
+            try:
+                raw_status = status_tag.find_next().text.strip()
+                if "," in raw_status:
+                    status = raw_status.split(",")[0].strip()
+                    date_match = re.search(r"\d{4}-\d{2}-\d{2}", raw_status)
+                    if date_match:
+                        adjusted_expiration = date_match.group()
+                else:
+                    status = raw_status
+            except:
+                pass
+
+        pdf = extract_pdf_link(soup)
+
+        return {
+            "document number": doc,
+            "used document": final_doc_used,
+            "inventor": inventor,
+            "inventor (translated)": inventor_translated,
+            "Current assignee": assignee,
+            "assignee (translated)": assignee_translated,
+            "status": status,
+            "adjusted expiration": adjusted_expiration,
+            "pdf": pdf,
+            "availability": availability
+        }
+
+    # --------------------------
+    # UI
+    # --------------------------
+    input_method = st.radio("Input Method", ["Paste", "Upload Excel"])
+
+    patents = []
+
+    if input_method == "Paste":
+        text = st.text_area("Paste patents (comma or newline separated)")
+        if text:
+            patents = re.split(r"[,\n]+", text)
+            patents = [p.strip() for p in patents if p.strip()]
+
+    else:
+        file = st.file_uploader("Upload Excel", type=["xlsx"])
+        if file:
+            df = pd.read_excel(file)
+            col = st.selectbox("Select Patent Column", df.columns)
+            patents = df[col].dropna().astype(str).tolist()
+
+    columns = [
+        "inventor",
+        "inventor (translated)",
+        "Current assignee",
+        "assignee (translated)",
+        "status",
+        "adjusted expiration",
+        "pdf"
+    ]
+
+    selected_cols = st.multiselect("Select Output Columns", columns, default=columns)
+
+    if st.button("🚀 Run Patent Scraper") and patents:
+        progress = st.progress(0)
+        results = []
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(process_patent, doc): doc for doc in patents}
+
+            for i, future in enumerate(as_completed(futures)):
+                results.append(future.result())
+                progress.progress((i + 1) / len(futures))
+
+        df_out = pd.DataFrame(results)
+
+        base_cols = ["document number", "used document", "availability"]
+        final_cols = base_cols + selected_cols
+        final_cols = [c for c in final_cols if c in df_out.columns]
+
+        df_out = df_out[final_cols]
+
+        st.success("✅ Scraping Completed")
+        st.dataframe(df_out)
+
+        buffer = BytesIO()
+        df_out.to_excel(buffer, index=False)
+        buffer.seek(0)
+
+        st.download_button(
+            "📥 Download Excel",
+            buffer,
+            file_name="patent_output.xlsx"
+        )
