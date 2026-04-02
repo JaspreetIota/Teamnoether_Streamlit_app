@@ -620,15 +620,15 @@ elif menu == "Patent Scraper":
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from deep_translator import GoogleTranslator
     from threading import Lock
+    import re
+    import pandas as pd
+    from io import BytesIO
 
     base_url = "https://patents.google.com/patent/{}"
     MAX_WORKERS = 6
 
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
-    })
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
 
     translation_cache = {}
     cache_lock = Lock()
@@ -737,10 +737,8 @@ elif menu == "Patent Scraper":
         soup = BeautifulSoup(response.text, "html.parser")
 
         # ==============================
-        # 🔥 INVENTOR + ASSIGNEE FIXED
+        # INVENTOR (FIXED MINIMALLY)
         # ==============================
-
-        # INVENTOR
         inventors = []
         inventor_dt = soup.find("dt", string=re.compile("Inventor", re.I))
 
@@ -758,7 +756,7 @@ elif menu == "Patent Scraper":
 
                 node = node.find_next_sibling()
 
-        # ✅ fallback
+        # fallback only added
         if not inventors:
             meta_inv = soup.find("meta", {"name": "DC.contributor"})
             if meta_inv:
@@ -767,7 +765,9 @@ elif menu == "Patent Scraper":
         inventor = " | ".join(dict.fromkeys(inventors))
         inventor_translated = " | ".join(dict.fromkeys(translate_batch(inventors)))
 
-        # ASSIGNEE
+        # ==============================
+        # ASSIGNEE (FIXED MINIMALLY)
+        # ==============================
         assignees = []
         assignee_dt = soup.find("dt", string=re.compile("Assignee", re.I))
 
@@ -785,7 +785,7 @@ elif menu == "Patent Scraper":
 
                 node = node.find_next_sibling()
 
-        # fallback 1
+        # existing fallback
         if not assignees:
             assignee_header = soup.find(id="assigneeWarning")
             if assignee_header:
@@ -793,7 +793,7 @@ elif menu == "Patent Scraper":
                 if dd:
                     assignees.append(dd.text.strip())
 
-        # fallback 2 (critical for Streamlit)
+        # added fallback
         if not assignees:
             meta_assignee = soup.find("meta", {"scheme": "assignee"})
             if meta_assignee:
@@ -802,7 +802,9 @@ elif menu == "Patent Scraper":
         assignee = " | ".join(dict.fromkeys(assignees))
         assignee_translated = " | ".join(dict.fromkeys(translate_batch(assignees)))
 
-        # STATUS
+        # ==============================
+        # STATUS (UNCHANGED)
+        # ==============================
         status_tag = soup.find(string=re.compile("Status", re.I))
         if status_tag:
             try:
@@ -831,3 +833,67 @@ elif menu == "Patent Scraper":
             "pdf": pdf,
             "availability": availability
         }
+
+    # --------------------------
+    # UI
+    # --------------------------
+    input_method = st.radio("Input Method", ["Paste", "Upload Excel"])
+
+    patents = []
+
+    if input_method == "Paste":
+        text = st.text_area("Paste patents (comma or newline separated)")
+        if text:
+            patents = re.split(r"[,\n]+", text)
+            patents = [p.strip() for p in patents if p.strip()]
+
+    else:
+        file = st.file_uploader("Upload Excel", type=["xlsx"])
+        if file:
+            df = pd.read_excel(file)
+            col = st.selectbox("Select Patent Column", df.columns)
+            patents = df[col].dropna().astype(str).tolist()
+
+    columns = [
+        "inventor",
+        "inventor (translated)",
+        "Current assignee",
+        "assignee (translated)",
+        "status",
+        "adjusted expiration",
+        "pdf"
+    ]
+
+    selected_cols = st.multiselect("Select Output Columns", columns, default=columns)
+
+    if st.button("🚀 Run Patent Scraper") and patents:
+        progress = st.progress(0)
+        results = []
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(process_patent, doc): doc for doc in patents}
+
+            for i, future in enumerate(as_completed(futures)):
+                results.append(future.result())
+                progress.progress((i + 1) / len(futures))
+
+        df_out = pd.DataFrame(results)
+
+        base_cols = ["document number", "used document", "availability"]
+        final_cols = base_cols + selected_cols
+        final_cols = [c for c in final_cols if c in df_out.columns]
+
+        df_out = df_out[final_cols]
+
+        st.success("✅ Scraping Completed")
+        st.dataframe(df_out)
+
+        buffer = BytesIO()
+        df_out.to_excel(buffer, index=False)
+        buffer.seek(0)
+
+        st.download_button(
+            "📥 Download Excel",
+            buffer,
+            file_name="patent_output.xlsx"
+        )
