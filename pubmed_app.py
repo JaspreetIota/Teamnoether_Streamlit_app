@@ -242,7 +242,7 @@ elif menu == "Excel Splitter":
 
     entries_per_file = st.number_input(
         "Number of entries per file",
-        min_value=100, max_value=10000, value=1500, step=100
+        min_value=100, max_value=20000, value=1500, step=100
     )
 
     if uploaded_file:
